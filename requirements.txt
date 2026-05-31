@@ -1,0 +1,17 @@
+# Core libraries for the Whisper model
+torch
+transformers
+openai-whisper
+accelerate
+huggingface_hub
+
+# Audio processing and system-wide hotkeys
+numpy
+keyboard
+pyaudio
+pyperclip
+psutil
+
+# For the enhanced Terminal User Interface (TUI)
+rich
+questionary

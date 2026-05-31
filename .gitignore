@@ -1,0 +1,24 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# User state (regenerated from defaults on first run)
+user_config.json
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Project working files
+.backup/
+backup/
+experimental/
+*.flag
