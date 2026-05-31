@@ -10,6 +10,11 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Set-Location $PSScriptRoot
 
+# Remove the Windows "Mark-of-the-Web" from every file in this folder, so the
+# scripts (run.ps1, etc.) are no longer flagged as "downloaded from another
+# computer". This is why launching via install.bat needs no manual unblocking.
+try { Get-ChildItem -Path $PSScriptRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue } catch { }
+
 function Write-Header($text) {
     Write-Host ""
     Write-Host "=================================================================" -ForegroundColor Cyan

@@ -109,19 +109,22 @@ asks.
 
 ## Installation
 
-1. Download or clone this repository:
+1. **Get the code.** Cloning is recommended because it avoids Windows'
+   "blocked file" warnings entirely:
 
 ```cmd
 git clone https://github.com/MRKNSTUDIO/WhisperType-STT.git
 cd WhisperType-STT
 ```
 
-2. Run the installer. Either **right-click `install.ps1` -> "Run with PowerShell"**,
-   or from a terminal:
+   (Or use the green **Code -> Download ZIP** button and extract it.)
 
-```cmd
-powershell -ExecutionPolicy Bypass -File install.ps1
-```
+2. **Double-click `install.bat`.**
+
+That's all. `install.bat` is a tiny launcher that starts the real installer
+(`install.ps1`) with the correct settings, so you do **not** need to change your
+PowerShell execution policy or manually "unblock" any files. If Windows shows a
+one-time *"Windows protected your PC"* prompt, click **More info -> Run anyway**.
 
 The installer will:
 
@@ -132,19 +135,16 @@ The installer will:
 - install the remaining dependencies from `requirements.txt`,
 - optionally pre-download Whisper models.
 
-> **Why `-ExecutionPolicy Bypass`?** By default Windows blocks running
-> `.ps1` scripts. This flag allows this one script to run without changing any
-> system-wide settings.
+> **Prefer the terminal?** You can also run the script directly with
+> `powershell -ExecutionPolicy Bypass -File install.ps1`. The `Bypass` flag is
+> what lets the script run without changing any system-wide settings.
 
 ---
 
 ## Usage
 
-Start the app by **right-clicking `run.ps1` -> "Run with PowerShell"**, or:
-
-```cmd
-powershell -ExecutionPolicy Bypass -File run.ps1
-```
+**Double-click `run.bat`** to start the app (or, from a terminal,
+`powershell -ExecutionPolicy Bypass -File run.ps1`).
 
 On first launch you'll be guided through picking a Whisper model and your
 language. After that, the default hotkeys are:
@@ -206,7 +206,9 @@ WhisperType-STT/
 ├── README.md
 ├── LICENSE                 # MIT
 ├── requirements.txt
+├── install.bat             # double-click this to install (launches install.ps1)
 ├── install.ps1             # one-step setup (venv + PyTorch + deps + models)
+├── run.bat                 # double-click this to start (launches run.ps1)
 ├── run.ps1                 # launches the app
 └── src/
     ├── main.py             # app entry point + hotkey loop
