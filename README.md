@@ -112,8 +112,8 @@ asks.
 1. Download or clone this repository:
 
 ```cmd
-git clone https://github.com/MRKNSTUDIO/WhisperType-TTS.git
-cd WhisperType-TTS
+git clone https://github.com/MRKNSTUDIO/WhisperType-STT.git
+cd WhisperType-STT
 ```
 
 2. Run the installer. Either **right-click `install.ps1` -> "Run with PowerShell"**,
@@ -202,7 +202,7 @@ Bug reports and PRs are welcome.
 ## Project structure
 
 ```
-WhisperType-TTS/
+WhisperType-STT/
 ├── README.md
 ├── LICENSE                 # MIT
 ├── requirements.txt
