@@ -186,9 +186,9 @@ def main_loop(device: torch.device):
             pass
 
         mode = config.get('hotkeys.hotkey_mode')
-        if KEYBOARD_AVAILABLE and mode == 'toggle':
-            toggle_key = (config.get('hotkeys.toggle_key') or '').lower()
-            if KEYBOARD_AVAILABLE and _keyboard.is_pressed(toggle_key):
+        record_key = (config.get('hotkeys.record_key') or '').lower()
+        if KEYBOARD_AVAILABLE and record_key and mode == 'toggle':
+            if _keyboard.is_pressed(record_key):
                 if not toggle_key_was_pressed:
                     toggle_key_was_pressed = True
                     is_recording = not is_recording
@@ -201,9 +201,8 @@ def main_loop(device: torch.device):
             else:
                 toggle_key_was_pressed = False
 
-        elif KEYBOARD_AVAILABLE and mode != 'toggle': # pushtotalk mode
-            ptt_key = (config.get('hotkeys.pushtotalk_key') or '').lower()
-            if KEYBOARD_AVAILABLE and _keyboard.is_pressed(ptt_key):
+        elif KEYBOARD_AVAILABLE and record_key: # push-to-talk mode
+            if _keyboard.is_pressed(record_key):
                 if not is_recording:
                     is_recording = True
                     recorder.start_recording()
@@ -271,9 +270,12 @@ def main():
     # Check if model_id and language are already configured
     selected_model_id = config.get('transcription.model_id')
     selected_language = config.get('transcription.language')
+    first_run_completed = bool(config.get('app.first_run_completed'))
 
-    # Only prompt for model selection if not already configured
-    if not selected_model_id:
+    # Always let the user confirm/choose the model on the first run (even if a
+    # model is already set, e.g. carried over from a copied config), and prompt
+    # whenever no model is configured at all.
+    if not first_run_completed or not selected_model_id:
         selected_model_id = initial_model_wizard()
         if not selected_model_id:
             tui.print_error("No model was selected. Exiting program.")
@@ -296,6 +298,9 @@ def main():
     if not transcriber.load_model(selected_model_id, device):
         tui.print_error("Failed to load the model. Exiting program.")
         return
+
+    if not first_run_completed:
+        config.set('app.first_run_completed', True)
 
     tui.print_success(f"{config.get('app.name')} is ready!")
     tui.print_ready_message()

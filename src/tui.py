@@ -1,6 +1,7 @@
 # tui.py
 import questionary
 import os
+import re
 try:
     import keyboard as _keyboard
     KEYBOARD_AVAILABLE = True
@@ -23,6 +24,41 @@ from config_manager import config
 from model_fetcher import fetch_available_whisper_models, is_installed, download_model, prettify, check_compatibility
 
 console = Console()
+
+_MODIFIER_LABELS = {
+    "ctrl": "Ctrl", "control": "Ctrl",
+    "alt": "Alt", "shift": "Shift", "win": "Win",
+}
+
+def format_hotkey_display(key: Optional[str]) -> str:
+    """Format a hotkey for display (F9, Ctrl+Q). Storage stays lowercase for keyboard."""
+    if not key:
+        return ""
+    parts = re.split(r"\s*\+\s*", key.strip())
+    out: list[str] = []
+    for part in parts:
+        p = part.strip()
+        if not p:
+            continue
+        pl = p.lower()
+        if pl in _MODIFIER_LABELS:
+            out.append(_MODIFIER_LABELS[pl])
+            continue
+        m = re.fullmatch(r"f(\d{1,2})", pl)
+        if m:
+            out.append(f"F{m.group(1)}")
+            continue
+        if pl == "scroll lock":
+            out.append("Scroll Lock")
+        elif pl == "right ctrl":
+            out.append("Right Ctrl")
+        elif pl == "pause":
+            out.append("Pause")
+        elif len(pl) == 1:
+            out.append(pl.upper())
+        else:
+            out.append(p.title())
+    return "+".join(out) if len(out) > 1 else (out[0] if out else key)
 
 def print_welcome():
     console.print(Panel(
@@ -304,15 +340,16 @@ def print_ready_message():
 
     if KEYBOARD_AVAILABLE:
         mode = config.get('hotkeys.hotkey_mode')
+        record_key = format_hotkey_display(config.get('hotkeys.record_key'))
         if mode == 'toggle':
-            record_key = config.get('hotkeys.toggle_key')
             console.print(f"[bold magenta]Record Mode:[/bold magenta]   Press '{record_key}' to start/stop recording.")
         else: # pushtotalk
-            record_key = config.get('hotkeys.pushtotalk_key')
             console.print(f"[bold magenta]Push-to-Talk:[/bold magenta]  HOLD '{record_key}' to record.")
 
-        console.print(f"[bold magenta]Settings:[/bold magenta]      Press '{config.get('hotkeys.settings_key_combination')}' to open options.")
-        console.print(f"[bold magenta]Quit:[/bold magenta]          Press '{config.get('hotkeys.exit_key_combination')}' to quit.")
+        settings_key = format_hotkey_display(config.get('hotkeys.settings_key_combination'))
+        exit_key = format_hotkey_display(config.get('hotkeys.exit_key_combination'))
+        console.print(f"[bold magenta]Settings:[/bold magenta]      Press '{settings_key}' to open options.")
+        console.print(f"[bold magenta]Quit:[/bold magenta]          Press '{exit_key}' to quit.")
     else:
         console.print("[yellow]Hotkeys unavailable. Ensure 'keyboard' package is installed and working.[/yellow]")
     console.print("="*60 + "\n")
@@ -322,19 +359,50 @@ def display_transcription(text_to_display: str, token_count: int = 0):
     if token_count > 0:
         console.print(f"[dim]Tokens used: {token_count}[/dim]")
 
+def _wait_for_keys_released(timeout: float = 3.0):
+    """Block until the keys used to navigate the menu (Enter, Esc, arrows,
+    modifiers, etc.) are no longer held. Without this, the Enter that selected
+    this menu item is still down and its auto-repeat is captured as the hotkey."""
+    import time
+    watch = (
+        'enter', 'esc', 'space', 'tab', 'up', 'down', 'left', 'right',
+        'ctrl', 'left ctrl', 'right ctrl', 'alt', 'left alt', 'right alt', 'shift',
+    )
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if not any(_keyboard.is_pressed(k) for k in watch):
+                return
+        except Exception:
+            return
+        time.sleep(0.02)
+
 def prompt_for_hotkey(prompt_message: str) -> Optional[str]:
-    console.print(f"\n[bold yellow]-- {prompt_message} --[/bold]")
-    console.print("[italic grey50](Press 'Ctrl+C' to cancel)[/italic]")
+    console.print(f"\n[bold yellow]-- {prompt_message} --[/]")
+    console.print("[italic grey50](Release Enter first, then press the key. 'Ctrl+C' to cancel.)[/]")
     try:
         if not KEYBOARD_AVAILABLE:
             print_info("Keyboard module not available on this platform.")
             return None
-        else:
-            hotkey = _keyboard.read_hotkey(suppress=False)
-        if hotkey == 'ctrl+c':
+
+        import time
+        # Wait for the menu-selection keypress (Enter) to be fully released so it
+        # isn't captured, then settle briefly before listening for a fresh key.
+        _wait_for_keys_released()
+        time.sleep(0.1)
+
+        hotkey = _keyboard.read_hotkey(suppress=False)
+
+        # Guard against keys that are clearly menu navigation rather than an
+        # intentional record key, which would otherwise create a confusing loop.
+        if hotkey in ('ctrl+c', 'esc'):
             print_info("Hotkey selection cancelled.")
             return None
-        print_success(f"New key set to: '{hotkey}'")
+        if hotkey in ('enter', 'return'):
+            print_error("'Enter' can't be used as the record key (it's the menu confirm key). Try another key.")
+            return None
+
+        print_success(f"New key set to: '{format_hotkey_display(hotkey)}'")
         return hotkey
     except Exception as e:
         print_error(f"Could not read hotkey: {escape(str(e))}")
@@ -345,13 +413,12 @@ def show_hotkey_settings_menu():
     while True:
         try:
             current_mode = config.get('hotkeys.hotkey_mode')
-            toggle_key = config.get('hotkeys.toggle_key')
-            ptt_key = config.get('hotkeys.pushtotalk_key')
+            mode_label = "Toggle" if current_mode == 'toggle' else "Push-to-Talk"
+            record_key = format_hotkey_display(config.get('hotkeys.record_key'))
 
             choices = [
-                questionary.Choice(f"Change Mode (Current: {current_mode})", value="change_mode"),
-                questionary.Choice(f"Set Toggle Key (Current: '{toggle_key}')", value="set_toggle_key"),
-                questionary.Choice(f"Set Push-to-Talk Key (Current: '{ptt_key}')", value="set_ptt_key"),
+                questionary.Choice(f"Change Mode (Current: {mode_label})", value="change_mode"),
+                questionary.Choice(f"Set Record Key (Current: '{record_key}')", value="set_record_key"),
                 questionary.Separator(),
                 questionary.Choice("Back to main menu", value="back")
             ]
@@ -364,28 +431,25 @@ def show_hotkey_settings_menu():
             last_choice = choice
 
             if choice == "change_mode":
+                toggle_choice = "Toggle (Press a key to start, press it again to stop)"
+                ptt_choice = "Push-to-Talk (Hold a key to record)"
                 new_mode = questionary.select(
                     "Select your preferred recording mode:",
-                    choices=[
-                        "Toggle (Press a key to start, press it again to stop)",
-                        "Push-to-Talk (Hold a key to record)"
-                    ],
-                    default="Toggle" if current_mode == 'toggle' else "Push-to-Talk"
+                    choices=[toggle_choice, ptt_choice],
+                    default=toggle_choice if current_mode == 'toggle' else ptt_choice
                 ).ask()
                 if new_mode:
-                    config.set('hotkeys.hotkey_mode', 'toggle' if 'Toggle' in new_mode else 'pushtotalk')
+                    config.set('hotkeys.hotkey_mode', 'toggle' if new_mode == toggle_choice else 'pushtotalk')
                     print_success(f"Hotkey mode set to '{config.get('hotkeys.hotkey_mode')}'.")
 
-            elif choice == "set_toggle_key":
-                new_key = prompt_for_hotkey("Press the key for Toggle Mode...")
+            elif choice == "set_record_key":
+                new_key = prompt_for_hotkey("Press the key to use for recording...")
                 if new_key:
-                    config.set('hotkeys.toggle_key', new_key)
-
-            elif choice == "set_ptt_key":
-                new_key = prompt_for_hotkey("Press the key for Push-to-Talk Mode...")
-                if new_key:
-                    config.set('hotkeys.pushtotalk_key', new_key)
-        except (KeyboardInterrupt, TypeError):
+                    config.set('hotkeys.record_key', new_key)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print_error(f"Hotkey settings error: {escape(str(e))}")
             break
 
 def _prompt_int_in_range(message: str, default_value: int, min_value: int, max_value: int) -> Optional[int]:

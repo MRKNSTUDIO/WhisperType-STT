@@ -16,17 +16,20 @@ class ConfigManager:
         self._defaults = {
             "app": {
                 "name": "WhisperType",
-                "version": __version__
+                "version": __version__,
+                "first_run_completed": False
             },
             "audio": {
                 "target_sample_rate": 16000, "pyaudio_format": "paFloat32", "channels": 1,
                 "chunk_size": 1024, "min_recording_ms": 500, "trim_start_ms": 150, "trim_end_ms": 150
             },
             "hotkeys": {
-                # Windows defaults: Toggle-Modus mit Scroll Lock.
+                # A single record key is used for BOTH modes. "hotkey_mode"
+                # decides whether pressing it toggles recording or records only
+                # while held (push-to-talk). F9 is on virtually every keyboard,
+                # does not insert text, and does not clash with the terminal.
                 "hotkey_mode": "toggle",
-                "toggle_key": "scroll lock",
-                "pushtotalk_key": "right ctrl",
+                "record_key": "f9",
                 "exit_key_combination": "ctrl+q",
                 "settings_key_combination": "f1"
             },
@@ -72,15 +75,19 @@ class ConfigManager:
     def load_config(self):
         defaults_copy = self._defaults.copy()
         old_version = None
+        migrated = False
         if os.path.exists(CONFIG_FILE_NAME):
             try:
                 with open(CONFIG_FILE_NAME, 'r') as f:
                     user_config = json.load(f)
-                    # Store old version before removing it
-                    if "app" in user_config and "version" in user_config.get("app", {}):
-                        old_version = user_config["app"]["version"]
-                        user_config["app"].pop("version", None)
-                    self.config = self._deep_merge(defaults_copy, user_config)
+                # Store old version before removing it
+                if "app" in user_config and "version" in user_config.get("app", {}):
+                    old_version = user_config["app"]["version"]
+                    user_config["app"].pop("version", None)
+                # Migrate the RAW user config before merging, so defaults don't
+                # mask whether the user had explicitly chosen a record key.
+                migrated = self._migrate_hotkeys(user_config.get("hotkeys"))
+                self.config = self._deep_merge(defaults_copy, user_config)
             except Exception as e:
                 print(f"[ERROR] Could not load {CONFIG_FILE_NAME}: {e}. Using default settings.")
                 self.config = defaults_copy
@@ -91,9 +98,35 @@ class ConfigManager:
         if "app" not in self.config:
             self.config["app"] = {}
         self.config["app"]["version"] = __version__
-        # Update config file if version changed (or was missing)
-        if old_version != __version__:
+
+        # Update config file if version changed (or was missing) or migrated.
+        if old_version != __version__ or migrated:
             self.save_config()
+
+    def _migrate_hotkeys(self, hk) -> bool:
+        """Upgrade old configs that used separate toggle_key/pushtotalk_key to a
+        single record_key. Operates on the raw user hotkeys dict (pre-merge).
+        Returns True if anything was changed."""
+        if not isinstance(hk, dict):
+            return False
+        changed = False
+        # Ensure a record_key exists. Preserve a genuinely custom legacy key, but
+        # retire the old defaults (scroll lock / right ctrl) in favour of the new
+        # universal default, since those are exactly what we're moving away from.
+        if not hk.get("record_key"):
+            retired = {"scroll lock", "right ctrl"}
+            legacy = (hk.get("toggle_key") or hk.get("pushtotalk_key") or "").strip()
+            if legacy and legacy.lower() not in retired:
+                hk["record_key"] = legacy
+            else:
+                hk["record_key"] = self._defaults["hotkeys"]["record_key"]
+            changed = True
+        # Drop obsolete keys so the config stays clean.
+        for old in ("toggle_key", "pushtotalk_key"):
+            if old in hk:
+                del hk[old]
+                changed = True
+        return changed
 
     def save_config(self):
         try:

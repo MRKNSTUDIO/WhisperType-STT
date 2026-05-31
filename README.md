@@ -167,8 +167,8 @@ Settings are stored in `user_config.json` in the project root. It is created
 automatically with sensible defaults on first run, and most options are editable
 from the in-app settings menu (F1). Useful keys:
 
-- `hotkeys.hotkey_mode` - `"toggle"` or `"pushtotalk"`
-- `hotkeys.toggle_key` / `hotkeys.pushtotalk_key` - the recording key
+- `hotkeys.hotkey_mode` - `"toggle"` (press to start/stop) or `"pushtotalk"` (hold to record)
+- `hotkeys.record_key` - the single recording key used in both modes (default `"f9"`)
 - `transcription.model_id` - active Whisper model
 - `transcription.language` - input language
 - `transcription.type_mode` - `"direct"` or `"paste"`
@@ -180,10 +180,6 @@ from the in-app settings menu (F1). Useful keys:
 This is a **beta** tool built for personal use - it works, but it's not polished
 and a few things are broken:
 
-- **Setting a new recording hotkey from the in-app settings (F1) does not work
-  reliably.** The menu's Enter key can get captured instead of your intended key.
-  **Workaround:** close the app and edit `user_config.json` directly - set
-  `hotkeys.toggle_key` (e.g. `"scroll lock"`) or `hotkeys.pushtotalk_key`.
 - **No "is a text field focused?" check.** Transcribed text is typed wherever the
   OS focus currently is. If no text field is focused (for example you're on the
   desktop), the keystrokes still fire and can trigger shortcuts. Make sure your
