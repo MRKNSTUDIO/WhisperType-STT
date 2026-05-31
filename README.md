@@ -151,9 +151,12 @@ language. After that, the default hotkeys are:
 
 | Action            | Default key   |
 | ----------------- | ------------- |
-| Start/stop record | **Scroll Lock** (Toggle mode) |
+| Start/stop record | **F9** (Toggle mode: press once to start, again to stop) |
 | Open settings     | **F1**        |
 | Quit              | **Ctrl + Q**  |
+
+The same **F9** key is used for recording in both modes; in **Push-to-Talk**
+mode you hold it instead of toggling. Change the key or mode in settings (F1).
 
 Speak while recording, and the transcription is typed into the currently focused
 field. Open the settings menu (F1) to change language, model, recording mode,
