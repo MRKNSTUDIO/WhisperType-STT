@@ -47,36 +47,72 @@ try {
     # ------------------------------------------------------------------
     Write-Step "Step 1 of 5: Select Python Installation"
 
-    $pythonPaths = @()
+    # Collect Python interpreters from several sources so none are missed.
+    $found = New-Object System.Collections.Generic.List[string]
+
+    # 1) The "py" launcher knows about every registered install. Parse the WHOLE
+    #    output with Matches (not a per-line singular Match), because PowerShell
+    #    sometimes returns this as one multi-line string, which would otherwise
+    #    yield only the first interpreter.
     try {
-        $rawList = & py --list-paths 2>$null
-    } catch {
-        $rawList = $null
+        $rawList = (& py --list-paths 2>&1 | Out-String)
+        foreach ($m in [regex]::Matches($rawList, '([A-Za-z]:\\[^\r\n]*?python\.exe)')) {
+            $found.Add($m.Groups[1].Value)
+        }
+    } catch { }
+
+    # 2) Anything named "python" on PATH (skip the Microsoft Store alias stub).
+    foreach ($c in (Get-Command python -All -ErrorAction SilentlyContinue)) {
+        if ($c.Source -and $c.Source -notmatch '\\WindowsApps\\') { $found.Add($c.Source) }
     }
 
-    if ($rawList) {
-        foreach ($line in $rawList) {
-            $match = [regex]::Match($line, '([A-Za-z]:\\[^\r\n]*python\.exe)')
-            if ($match.Success) { $pythonPaths += $match.Groups[1].Value }
+    # 3) Common install locations the launcher might not list (e.g. conda).
+    $searchRoots = @(
+        "C:\Python*\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python*\python.exe",
+        "$env:ProgramData\miniconda3\python.exe",
+        "$env:ProgramData\anaconda3\python.exe",
+        "$env:LOCALAPPDATA\miniconda3\python.exe",
+        "$env:USERPROFILE\miniconda3\python.exe",
+        "$env:USERPROFILE\anaconda3\python.exe"
+    )
+    foreach ($pattern in $searchRoots) {
+        foreach ($f in (Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue)) {
+            $found.Add($f.FullName)
+        }
+    }
+
+    # De-duplicate (case-insensitive) and keep only paths that actually exist.
+    $pythonPaths = @()
+    $seen = @{}
+    foreach ($p in $found) {
+        if (-not $p) { continue }
+        try { $full = [System.IO.Path]::GetFullPath($p) } catch { $full = $p }
+        $key = $full.ToLowerInvariant()
+        if ((Test-Path $full) -and -not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            $pythonPaths += $full
         }
     }
 
     if ($pythonPaths.Count -eq 0) {
-        # Fall back to whatever "python" resolves to on PATH.
-        $cmd = Get-Command python -ErrorAction SilentlyContinue
-        if ($cmd) { $pythonPaths += $cmd.Source }
-    }
-
-    if ($pythonPaths.Count -eq 0) {
         Write-Host "[CRITICAL ERROR] No Python installation found." -ForegroundColor Red
-        Write-Host "Please install 64-bit Python 3.11 from https://www.python.org/downloads/ and re-run."
+        Write-Host "Please install 64-bit Python 3.11+ from https://www.python.org/downloads/ and re-run."
         Pause-Continue
         exit 1
     }
 
     Write-Host "Available Python installations:"
     for ($i = 0; $i -lt $pythonPaths.Count; $i++) {
-        Write-Host ("  [{0}] {1}" -f ($i + 1), $pythonPaths[$i])
+        $ver = ""
+        try {
+            $ver = (& $pythonPaths[$i] -c "import sys;print('.'.join(map(str,sys.version_info[:3])), '64-bit' if sys.maxsize>2**32 else '32-bit')" 2>$null) -join ''
+        } catch { }
+        if ($ver) {
+            Write-Host ("  [{0}] Python {1,-16} {2}" -f ($i + 1), $ver, $pythonPaths[$i])
+        } else {
+            Write-Host ("  [{0}] {1}" -f ($i + 1), $pythonPaths[$i])
+        }
     }
     Write-Host ""
 
@@ -137,13 +173,50 @@ try {
         Write-Host "[INFO] No NVIDIA GPU detected. CPU mode is recommended."
     }
 
-    # Recommend a default wheel. PyTorch pip wheels bundle their own CUDA
-    # runtime, so they only require a recent enough driver.
-    $recommended = $null
+    # Pick the best PyTorch wheel index. The pip wheels bundle their own CUDA
+    # runtime, so the requirements are: (a) a driver new enough for that CUDA
+    # version, and (b) a wheel actually built for the selected Python ON WINDOWS.
+    # (This is why a hardcoded cu121 failed on Python 3.13 - cu121 ships no
+    #  win_amd64 cp313 wheels.)
+    $pyTag = ""
+    try { $pyTag = (& $venvPython -c "import sys;print(f'cp{sys.version_info.major}{sys.version_info.minor}')" 2>$null).Trim() } catch { }
+
+    # Parse the driver CUDA version in a locale-independent way (e.g. "13.1").
+    $driverNum = 0.0
     if ($driverCuda) {
-        $major = [int]([double]$driverCuda)
-        if ($major -ge 12) { $recommended = "https://download.pytorch.org/whl/cu121" }
-        elseif ($major -ge 11) { $recommended = "https://download.pytorch.org/whl/cu118" }
+        [void][double]::TryParse($driverCuda, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$driverNum)
+    }
+
+    function Find-TorchIndex([string[]]$names, [string]$cpTag) {
+        foreach ($n in $names) {
+            $url = "https://download.pytorch.org/whl/$n"
+            try {
+                $html = (Invoke-WebRequest -UseBasicParsing "$url/torch/" -TimeoutSec 25).Content
+                if ($cpTag) {
+                    if ($html -match "$cpTag-$cpTag-win_amd64") { return $url }
+                } elseif ($html -match 'win_amd64') { return $url }
+            } catch { }
+        }
+        return $null
+    }
+
+    # CUDA runtime version shipped by each wheel index. We only consider builds
+    # whose CUDA version is <= what the driver supports, newest first, then probe
+    # the index for a wheel matching this Python on Windows.
+    $wheelCuda = [ordered]@{ 'cu130' = 13.0; 'cu128' = 12.8; 'cu126' = 12.6; 'cu124' = 12.4; 'cu121' = 12.1; 'cu118' = 11.8 }
+    $recommended = $null
+    if ($driverNum -gt 0) {
+        $candidates = @()
+        foreach ($k in $wheelCuda.Keys) { if ($wheelCuda[$k] -le $driverNum) { $candidates += $k } }
+        if ($candidates.Count -gt 0) {
+            Write-Host "Checking which CUDA build has a wheel for Python ($pyTag) on Windows..." -ForegroundColor DarkGray
+            $recommended = Find-TorchIndex $candidates $pyTag
+        }
+        if (-not $recommended) {
+            Write-Host "[INFO] No prebuilt CUDA wheel matches this Python version yet." -ForegroundColor Yellow
+            Write-Host "       Very new Python releases sometimes lack a GPU build for a while." -ForegroundColor Yellow
+            Write-Host "       You can pick an older Python (re-run) or use a CPU build below." -ForegroundColor Yellow
+        }
     }
 
     Write-Host ""
@@ -172,10 +245,10 @@ try {
             Write-Host "Example: pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu126"
             $custom = Read-Host "Command"
             # Strip a leading "pip install" / "pip3 install" if the user pasted it.
-            $args = $custom -replace '^\s*pip3?\s+install\s+', ''
-            if (-not ($args -match 'torch')) { $args = "torch torchaudio $args" }
-            Write-Host "Running: pip install $args"
-            & $venvPython -m pip install @($args -split '\s+')
+            $pipArgs = $custom -replace '^\s*pip3?\s+install\s+', ''
+            if (-not ($pipArgs -match 'torch')) { $pipArgs = "torch torchaudio $pipArgs" }
+            Write-Host "Running: pip install $pipArgs"
+            & $venvPython -m pip install @($pipArgs -split '\s+' | Where-Object { $_ })
             $installOk = ($LASTEXITCODE -eq 0)
         }
         "3" {
